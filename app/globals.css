@@ -58,6 +58,7 @@ button { cursor: pointer; }
   padding: 10px 13px;
 }
 .danger { color: var(--danger); }
+.primary.danger { background: var(--danger); color: white; }
 .modal-backdrop {
   position: fixed;
   inset: 0;
