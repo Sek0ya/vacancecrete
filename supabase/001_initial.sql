@@ -91,3 +91,11 @@ revoke all on public.expenses from anon, authenticated;
 revoke all on public.expense_shares from anon, authenticated;
 revoke all on public.settlements from anon, authenticated;
 
+-- Depuis mai 2026, les nouveaux projets Supabase n’exposent plus forcément
+-- les tables au Data API. Le serveur doit donc recevoir ses droits explicitement.
+grant select, insert, update, delete on public.trips to service_role;
+grant select, insert, update, delete on public.participants to service_role;
+grant select, insert, update, delete on public.expenses to service_role;
+grant select, insert, update, delete on public.expense_shares to service_role;
+grant select, insert, update, delete on public.settlements to service_role;
+
