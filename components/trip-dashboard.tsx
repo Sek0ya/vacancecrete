@@ -6,6 +6,7 @@ import { centsToInput, formatMoney, parseMoneyToCents, splitEqually } from "@/li
 import { CATEGORIES, type Expense, type Participant, type Transfer, type Trip } from "@/lib/types";
 
 type Modal = "expense" | "settlement" | "settings" | null;
+type Confirmation = { title: string; message: string; confirmLabel: string; onConfirm: () => Promise<void> };
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -26,6 +27,7 @@ export function TripDashboard({ initialTrip, token }: { initialTrip: Trip; token
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
 
   const balances = useMemo(() => calculateBalances(trip), [trip]);
   const plan = useMemo(() => buildSettlementPlan(balances), [balances]);
@@ -62,14 +64,22 @@ export function TripDashboard({ initialTrip, token }: { initialTrip: Trip; token
     }
   }
 
-  async function removeExpense(expense: Expense) {
-    if (!window.confirm(`Supprimer « ${expense.name} » ?`)) return;
-    await sendAction({ action: "deleteExpense", id: expense.id });
+  function removeExpense(expense: Expense) {
+    setConfirmation({
+      title: "Supprimer la dépense ?",
+      message: `« ${expense.name} » sera supprimée et tous les soldes seront recalculés.`,
+      confirmLabel: "Supprimer",
+      onConfirm: async () => { await sendAction({ action: "deleteExpense", id: expense.id }); },
+    });
   }
 
-  async function removeSettlement(id: string) {
-    if (!window.confirm("Annuler ce remboursement ? Les soldes seront recalculés.")) return;
-    await sendAction({ action: "deleteSettlement", id });
+  function removeSettlement(id: string) {
+    setConfirmation({
+      title: "Annuler le remboursement ?",
+      message: "Le remboursement sera supprimé et les soldes seront recalculés.",
+      confirmLabel: "Annuler le remboursement",
+      onConfirm: async () => { await sendAction({ action: "deleteSettlement", id }); },
+    });
   }
 
   return (
@@ -173,6 +183,7 @@ export function TripDashboard({ initialTrip, token }: { initialTrip: Trip; token
       {modal === "expense" && <ExpenseModal trip={trip} expense={editedExpense} busy={busy} onClose={() => setModal(null)} onSave={async (expense) => { if (await sendAction({ action: "saveExpense", expense })) setModal(null); }} />}
       {modal === "settlement" && <SettlementModal trip={trip} plan={plan} busy={busy} onClose={() => setModal(null)} onSave={async (settlement) => { if (await sendAction({ action: "addSettlement", ...settlement })) setModal(null); }} />}
       {modal === "settings" && <SettingsModal trip={trip} busy={busy} onClose={() => setModal(null)} onAction={sendAction} />}
+      {confirmation && <ConfirmModal confirmation={confirmation} busy={busy} onClose={() => setConfirmation(null)} onConfirm={async () => { await confirmation.onConfirm(); setConfirmation(null); }} />}
     </main>
   );
 }
@@ -212,6 +223,16 @@ function ExpenseCard({ expense, trip, onEdit, onDelete }: { expense: Expense; tr
 
 function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal" role="dialog" aria-modal="true" aria-label={title}><div className="mb-5 flex items-center justify-between"><h2 className="text-2xl font-black tracking-tight">{title}</h2><button className="grid size-10 place-items-center rounded-full bg-[#f1f3f1] text-2xl" onClick={onClose} aria-label="Fermer">×</button></div>{children}</section></div>;
+}
+
+function ConfirmModal({ confirmation, busy, onClose, onConfirm }: { confirmation: Confirmation; busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+  return <ModalShell title={confirmation.title} onClose={onClose}>
+    <p className="text-sm leading-6 text-[var(--muted)]">{confirmation.message}</p>
+    <div className="mt-6 flex gap-2">
+      <button className="secondary flex-1" onClick={onClose} disabled={busy}>Conserver</button>
+      <button className="primary danger flex-[1.5]" onClick={onConfirm} disabled={busy}>{busy ? "Suppression…" : confirmation.confirmLabel}</button>
+    </div>
+  </ModalShell>;
 }
 
 function ExpenseModal({ trip, expense, busy, onClose, onSave }: { trip: Trip; expense: Expense | null; busy: boolean; onClose: () => void; onSave: (expense: object) => Promise<void> }) {
@@ -304,21 +325,22 @@ function SettingsModal({ trip, busy, onClose, onAction }: { trip: Trip; busy: bo
   const [tripName, setTripName] = useState(trip.name);
   const [currency, setCurrency] = useState(trip.currency);
   const [newName, setNewName] = useState("");
+  const [participantToDelete, setParticipantToDelete] = useState<Participant | null>(null);
   async function saveTrip(event: React.FormEvent) { event.preventDefault(); await onAction({ action: "updateTrip", name: tripName, currency }); }
   async function addParticipant(event: React.FormEvent) { event.preventDefault(); if (newName.trim() && await onAction({ action: "addParticipant", name: newName })) setNewName(""); }
   async function updateParticipant(participant: Participant, name: string) { if (name.trim() && name !== participant.name) await onAction({ action: "updateParticipant", id: participant.id, name }); }
-  async function removeParticipant(participant: Participant) { if (window.confirm(`Supprimer ${participant.name} du voyage ?`)) await onAction({ action: "deleteParticipant", id: participant.id }); }
-  return <ModalShell title="Gérer le voyage" onClose={onClose}>
+  async function confirmParticipantDeletion() { if (participantToDelete) { await onAction({ action: "deleteParticipant", id: participantToDelete.id }); setParticipantToDelete(null); } }
+  return <><ModalShell title="Gérer le voyage" onClose={onClose}>
     <form className="space-y-4 border-b border-[var(--line)] pb-5" onSubmit={saveTrip}>
       <div><label className="label" htmlFor="settings-name">Nom du voyage</label><input id="settings-name" className="field" value={tripName} onChange={(event) => setTripName(event.target.value)} maxLength={100} required /></div>
       <div><label className="label" htmlFor="settings-currency">Devise</label><select id="settings-currency" className="field" value={currency} onChange={(event) => setCurrency(event.target.value)}><option>EUR</option><option>USD</option><option>GBP</option><option>CHF</option></select></div>
       <button className="secondary w-full" disabled={busy}>Enregistrer les informations</button>
     </form>
-    <div className="py-5"><h3 className="mb-3 text-lg font-black">Participants</h3><div className="space-y-2">{trip.participants.map((participant) => <ParticipantRow key={`${participant.id}-${participant.name}`} participant={participant} busy={busy} onSave={updateParticipant} onDelete={removeParticipant} />)}</div>
+    <div className="py-5"><h3 className="mb-3 text-lg font-black">Participants</h3><div className="space-y-2">{trip.participants.map((participant) => <ParticipantRow key={`${participant.id}-${participant.name}`} participant={participant} busy={busy} onSave={updateParticipant} onDelete={async (item) => setParticipantToDelete(item)} />)}</div>
       <form className="mt-4 flex gap-2" onSubmit={addParticipant}><input className="field" aria-label="Nom du nouveau participant" value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="Nouveau prénom" maxLength={100} /><button className="primary shrink-0" disabled={busy || !newName.trim()}>Ajouter</button></form>
     </div>
     <button className="secondary w-full" onClick={onClose}>Fermer</button>
-  </ModalShell>;
+  </ModalShell>{participantToDelete && <ConfirmModal confirmation={{ title: "Supprimer le participant ?", message: `${participantToDelete.name} sera retiré du voyage si aucune dépense ne le concerne.`, confirmLabel: "Supprimer", onConfirm: confirmParticipantDeletion }} busy={busy} onClose={() => setParticipantToDelete(null)} onConfirm={confirmParticipantDeletion} />}</>;
 }
 
 function ParticipantRow({ participant, busy, onSave, onDelete }: { participant: Participant; busy: boolean; onSave: (participant: Participant, name: string) => Promise<void>; onDelete: (participant: Participant) => Promise<void> }) {
